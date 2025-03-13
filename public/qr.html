@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Bienvenido</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <img class="logo" src="https://firebasestorage.googleapis.com/v0/b/jorgeaveraf-js.appspot.com/o/img%2FLogo%20on%20white.png?alt=media&token=eab1360a-6947-40f6-94b8-3f1b3c1b994b" alt="Scolaris Logo" />
+      
+      <h1 id="welcome">Bienvenido a Scolaris</h1>
+      <p id="companyName"></p>
+      <p>Escanea el código QR para vincular tu WhatsApp</p>
+      <div id="qrcode"></div>
+
+      <footer>
+        <p>
+          Al escanear, aceptas nuestros términos y condiciones para el uso de tu WhatsApp.
+          Puedes consultarlos en 
+          <a href="https://scolaris.com.mx" target="_blank">scolaris.com.mx</a>.
+        </p>
+      </footer>
+    </div>
+
+        <!-- Overlay + Modal de éxito -->
+        <div id="modalOverlay" class="overlay">
+          <div id="successModal" class="modal">
+            <h2>¡Conexión establecida con éxito!</h2>
+            <p>Tu WhatsApp está conectado.</p>
+          </div>
+        </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
