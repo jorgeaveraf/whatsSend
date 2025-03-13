@@ -1,6 +1,12 @@
-const venom = require('venom-bot');
+const dotenv = require('dotenv');
+
+if (!process.env.PORT) {
+  dotenv.config(); // Solo carga .env si no se usa PM2
+}
+
 const express = require('express');
-require('dotenv').config();
+const venom = require('venom-bot');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
@@ -10,7 +16,6 @@ const PORT = process.env.PORT || 3000;
 const SESSION_NAME = process.env.SESSION_NAME || 'default_session';
 const COMPANY_NAME = process.env.COMPANY_NAME || 'Empresa Desconocida';
 const CLIENT_ID = process.env.CLIENT_ID || '0000';
-const path = require('path'); 
 const ACCESS_KEY = process.env.ACCESS_KEY || 'Null';
 
 

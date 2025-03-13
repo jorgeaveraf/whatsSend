@@ -4,6 +4,7 @@ package-lock.json
 pnpm-lock.yaml
 
 # ⚙️ Configuración y Archivos Temporales
+ecosystem.config.js
 .env
 .DS_Store
 *.log
