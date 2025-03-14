@@ -105,11 +105,32 @@ function restartBot() {
   }, 10000);
 }
 
+// Middleware para autenticar usando la ACCESS_KEY
+function authenticateRequest(req, res, next) {
+  const authHeader = req.headers.authorization;
+  console.log("🚀 Headers authorization:", req.headers.authorization);
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'No autorizado: Falta el token' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  console.log("🚀 Token recibido:", token);
+  console.log("🚀 Esperaba:", ACCESS_KEY);
+
+  if (token !== ACCESS_KEY) {
+    return res.status(403).json({ error: 'Acceso denegado: Clave incorrecta' });
+  }
+
+  next(); // Si la autenticación es correcta, pasa al siguiente middleware
+}
+
+
 // Iniciamos el bot al arrancar
 startBot();
 
 // Endpoint para enviar mensajes
-app.post('/send', async (req, res) => {
+app.post('/send', authenticateRequest, async (req, res) => {
   const { number, message } = req.body;
   if (!number || !message) {
     return res.status(400).json({ error: 'Número y mensaje requeridos' });
