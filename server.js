@@ -32,6 +32,7 @@ function startBot() {
     .create({
       session: SESSION_NAME,
       multidevice: true,
+      headless: true,
       catchQR: (base64Qr) => {
         qrBase64 = base64Qr;
         console.log('⚡ [QR Capturado]', base64Qr.slice(0, 60) + '...');
@@ -135,17 +136,32 @@ app.get('/status', (req, res) => {
 
 // Endpoint para devolver el QR
 app.get('/qr-data', (req, res) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'No autorizado: Falta el token' });
+  }
+
+  const token = authHeader.split(' ')[1];
+
+  if (token !== ACCESS_KEY) {
+    return res.status(403).json({ error: 'Acceso denegado: Clave incorrecta' });
+  }
+
   if (!qrBase64) {
     return res.status(404).json({ status: false, message: 'QR aún no generado. Espera unos segundos...' });
   }
+
   res.json({ status: true, data: qrBase64 });
 });
+
 
 // Endpoint para config
 app.get('/config', (req, res) => {
   res.json({
     companyName: COMPANY_NAME,
-    termsUrl: 'https://scolaris.com.mx'
+    termsUrl: 'https://scolaris.com.mx',
+    accessKey: ACCESS_KEY,
   });
 });
 

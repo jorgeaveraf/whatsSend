@@ -1,11 +1,14 @@
 document.addEventListener("DOMContentLoaded", () => {
   animateContainer();
   animateLogo();
-  loadConfig();
-  loadQr();
-
-  // Iniciamos un chequeo periódico del estado de conexión
-  startConnectionWatcher();
+  loadConfig()
+    .then(() => {
+      // 2. Cuando ya tenemos la clave, cargamos el QR
+      loadQr();
+      // 3. Iniciamos el watcher de conexión
+      startConnectionWatcher();
+    })
+    .catch(err => console.error("Error al cargar config:", err));
 });
 
 /* ---------------------
@@ -33,28 +36,34 @@ function animateLogo() {
 /* ---------------------
    2. Carga de config
 ---------------------- */
+let ACCESS_KEY = "";
+
 function loadConfig() {
-  fetch("/config")
+  return fetch("/config")
     .then(res => res.json())
     .then(config => {
       const elem = document.getElementById("companyName");
       if (elem) elem.textContent = config.companyName;
       document.title = "Bienvenido a " + config.companyName;
-    })
-    .catch(err => console.error("Error al obtener config:", err));
+      ACCESS_KEY = config.accessKey;
+    });
 }
 
 /* ---------------------
    3. Carga del QR
 ---------------------- */
 function loadQr() {
-  fetch("/qr-data")
+  fetch("/qr-data", {
+    headers: {
+      "Authorization": `Bearer ${ACCESS_KEY}`, // 🔑 Enviar clave en el encabezado
+    },
+  })
     .then(res => res.json())
     .then(data => {
       if (data.status && data.data) {
         const qrDiv = document.getElementById("qrcode");
         const img = document.createElement("img");
-        img.src = data.data;     // "data:image/png;base64,AAAA..."
+        img.src = data.data; // "data:image/png;base64,AAAA..."
         img.style.opacity = "0"; // Para animación fade-in
         qrDiv.appendChild(img);
 
@@ -68,6 +77,7 @@ function loadQr() {
     })
     .catch(err => console.error("Error al obtener el QR:", err));
 }
+
 
 /* ---------------------
    4. Chequeo periódico de conexión
