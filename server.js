@@ -102,11 +102,15 @@ function startBot() {
       client.onMessage(async (message) => {
         console.log("📩 Nuevo mensaje recibido:", message);
 
-        const isDirectMessage = message.to?.includes('@c.us') || message.to?.includes('@g.us');
-        if (!isDirectMessage) {
-          console.log("📵 Ignorado: no es un mensaje directo (probablemente status).");
+        const isGroup = message.chatId?.endsWith('@g.us');
+        const isBroadcast = message.chatId === 'status@broadcast';
+        const isDirectUser = message.chatId?.endsWith('@c.us');
+
+        if (!isDirectUser || isGroup || isBroadcast) {
+          console.log(`📵 Ignorado: mensaje no deseado (${message.chatId})`);
           return;
         }
+
 
         const ignoredTypes = ['sticker', 'location', 'vcard'];
         if (ignoredTypes.includes(message.type)) {
