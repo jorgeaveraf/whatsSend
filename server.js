@@ -1,12 +1,12 @@
+const express = require('express');
+const venom = require('venom-bot');
+const path = require('path');
+const fs = require('fs');
 const dotenv = require('dotenv');
 
 if (!process.env.PORT) {
   dotenv.config(); // Solo carga .env si no se usa PM2
 }
-
-const express = require('express');
-const venom = require('venom-bot');
-const path = require('path');
 
 const app = express();
 app.use(express.json());
@@ -17,12 +17,65 @@ const SESSION_NAME = process.env.SESSION_NAME || 'default_session';
 const COMPANY_NAME = process.env.COMPANY_NAME || 'Empresa Desconocida';
 const CLIENT_ID = process.env.CLIENT_ID || '0000';
 const ACCESS_KEY = process.env.ACCESS_KEY || 'Null';
+const N8N_WEBHOOK = process.env.N8N_WEBHOOK || 'https://n8n.scolaris.com/webhook/whatsapp-messages';
+const BASE_URL = process.env.BASE_URL || `http://127.0.0.1:${PORT}`;
 
 
 let client = null;
 let qrBase64 = null;
 let isClientConnected = false;
 let healthCheckInterval = null;
+let retryCount = 0;
+const MAX_RETRIES = 5;
+const MAX_BUFFER_SIZE = 100; // últimos 100 mensajes
+let messageAuditQueue = [];
+
+
+
+// ========== Helpers & Middlewares ==========
+
+function authenticateRequest(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'No autorizado: Falta el token' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  if (token !== ACCESS_KEY) {
+    return res.status(403).json({ error: 'Acceso denegado: Clave incorrecta' });
+  }
+
+  next();
+}
+
+async function sendToN8N(data) {
+  console.log("🚀 Enviando datos a n8n:", JSON.stringify(data, null, 2));
+
+  try {
+    const response = await fetch(N8N_WEBHOOK, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    });
+
+    const responseBody = await response.text();
+    console.log("✅ Respuesta de n8n:", responseBody);
+  } catch (error) {
+    console.error("❌ Error al enviar mensaje a n8n:", error);
+  }
+}
+
+function storeInAuditQueue(data) {
+  if (messageAuditQueue.length >= MAX_BUFFER_SIZE) {
+    messageAuditQueue.shift(); // elimina el más antiguo
+  }
+  messageAuditQueue.push({
+    ...data,
+    timestamp: Date.now()
+  });
+}
+
+
 
 // Función para iniciar Venom-Bot
 function startBot() {
@@ -32,7 +85,7 @@ function startBot() {
     .create({
       session: SESSION_NAME,
       multidevice: true,
-      headless: true,
+      headless: 'new',
       catchQR: (base64Qr) => {
         qrBase64 = base64Qr;
         console.log('⚡ [QR Capturado]', base64Qr.slice(0, 60) + '...');
@@ -46,6 +99,87 @@ function startBot() {
       // Activamos un timer para chequear la conexión cada 30s
       startHealthCheck();
 
+      client.onMessage(async (message) => {
+        console.log("📩 Nuevo mensaje recibido:", message);
+
+        const isDirectMessage = message.to?.includes('@c.us') || message.to?.includes('@g.us');
+        if (!isDirectMessage) {
+          console.log("📵 Ignorado: no es un mensaje directo (probablemente status).");
+          return;
+        }
+
+        const ignoredTypes = ['sticker', 'location', 'vcard'];
+        if (ignoredTypes.includes(message.type)) {
+          console.log(`🚫 Mensaje tipo ${message.type} ignorado.`);
+          return;
+        }
+      
+        const from = message.from.replace(/\D/g, ''); // Limpia el número de teléfono
+      
+        try {
+          // 🎞️ Imágenes, videos, audios, documentos
+          if (message.isMedia || message.isMMS || message.type === 'image' || message.type === 'video' || message.type === 'document' || message.type === 'audio' || message.type === 'ptt') {
+            console.log(`📥 Archivo detectado. Tipo: ${message.type}, MIME: ${message.mimetype}`);
+      
+            const buffer = await client.decryptFile(message); // 🎯 Usa decryptFile para obtener el archivo
+            if (!buffer) {
+              console.error("❌ Error: El archivo no pudo ser descargado o desencriptado.");
+              return;
+            }
+      
+            if (!message.mimetype) {
+              console.warn("⚠️ Archivo recibido sin mimetype, ignorado.");
+              return;
+            }            
+
+            const extension = message.mimetype?.split("/")[1] || "bin";
+            const fileName = `${from}-${Date.now()}.${extension}`;
+            const filePath = path.join(__dirname, 'public/uploads', fileName);
+            await fs.promises.writeFile(filePath, buffer);
+            console.log("📁 Archivo guardado en:", filePath);
+      
+            const fileUrl = `${BASE_URL}/uploads/${fileName}`;
+
+      
+            // 🧠 Clasificamos el tipo para n8n según prioridad de procesamiento
+            const messageForN8n = {
+              from,
+              type: message.type,
+              mimetype: message.mimetype,
+              filename: fileName,
+              fileUrl
+            };
+      
+            await sendToN8N(messageForN8n);
+            storeInAuditQueue(messageForN8n);
+          }
+      
+          // ✉️ Mensajes de texto
+          else if (message.type === 'chat' || message.type === 'text') {
+            await sendToN8N({ from, text: message.body });
+            storeInAuditQueue({
+              from,
+              type: message.type,
+              text: message.body
+            });
+          }
+      
+          // 🔇 Otros tipos de mensaje que no procesamos
+          else {
+            console.log(`ℹ️ Tipo de mensaje no manejado: ${message.type}`);
+          }
+      
+        } catch (error) {
+          console.error("❌ Error general en procesamiento de mensaje:", error);
+          storeInAuditQueue({
+            from,
+            error: error.message || 'fallo desconocido',
+            type: message.type
+          });          
+        }
+      });    
+    
+
       // Manejo de estados
       client.onStateChange(async (state) => {
         console.log('📡 Estado del cliente:', state);
@@ -58,9 +192,19 @@ function startBot() {
     })
     .catch((err) => {
       console.error('❌ Error al iniciar Venom-Bot:', err);
-      // Reintenta al cabo de 5s si falla
-      setTimeout(startBot, 5000);
+    
+      if (retryCount >= MAX_RETRIES) {
+        console.error('🚫 Límite de reintentos alcanzado. Deteniendo reinicio automático.');
+        return;
+      }
+    
+      retryCount++;
+      const retryDelay = 5000 * Math.pow(2, retryCount - 1); // 5s, 10s, 20s, 40s, 80s...
+    
+      console.log(`⏳ Reintentando en ${retryDelay / 1000}s... (Intento ${retryCount}/${MAX_RETRIES})`);
+      setTimeout(startBot, retryDelay);
     });
+    
 }
 
 // Timer que hace ping cada 30s
@@ -105,31 +249,9 @@ function restartBot() {
   }, 10000);
 }
 
-// Middleware para autenticar usando la ACCESS_KEY
-function authenticateRequest(req, res, next) {
-  const authHeader = req.headers.authorization;
-  console.log("🚀 Headers authorization:", req.headers.authorization);
-
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'No autorizado: Falta el token' });
-  }
-
-  const token = authHeader.split(' ')[1];
-  console.log("🚀 Token recibido:", token);
-  console.log("🚀 Esperaba:", ACCESS_KEY);
-
-  if (token !== ACCESS_KEY) {
-    return res.status(403).json({ error: 'Acceso denegado: Clave incorrecta' });
-  }
-
-  next(); // Si la autenticación es correcta, pasa al siguiente middleware
-}
-
-
 // Iniciamos el bot al arrancar
 startBot();
 
-// Endpoint para enviar mensajes
 app.post('/send', authenticateRequest, async (req, res) => {
   const { number, message } = req.body;
   if (!number || !message) {
@@ -149,8 +271,6 @@ app.post('/send', authenticateRequest, async (req, res) => {
 });
 
 app.get('/status', (req, res) => {
-  // isClientConnected es la variable que ya manejas
-  // true = conectado, false = no conectado
   res.json({ connected: isClientConnected });
 });
 
@@ -192,12 +312,57 @@ app.get('/qr', (req, res) => {
     return res.status(401).send('No autorizado: clave incorrecta');
   }
 
-  // Si la clave es correcta, servimos el HTML
   res.sendFile(path.join(__dirname, 'public', 'qr.html'));
+});
+
+app.post('/restart-bot', authenticateRequest, async (req, res) => {
+  console.log('🔁 Reinicio manual del bot solicitado');
+
+  try {
+    if (client) {
+      console.log('🧹 Cerrando sesión actual antes de reiniciar...');
+      await client.close();
+    }
+  } catch (err) {
+    console.error('⚠️ Error al cerrar sesión previa:', err);
+  }
+
+  retryCount = 0; // Reiniciamos contador de reintentos
+  startBot();     // Relanzamos
+  res.json({ success: true, message: 'Bot reiniciado manualmente' });
+});
+
+app.get('/audit', authenticateRequest, (req, res) => {
+  res.json({ messages: messageAuditQueue });
 });
 
 
 app.use(express.static('public'));
+
+// Limpieza automática de archivos antiguos (cada noche a las 3am)
+const cron = require('node-cron');
+
+cron.schedule('0 3 * * *', async () => {
+  const uploadsDir = path.join(__dirname, 'public/uploads');
+  try {
+    const files = await fs.promises.readdir(uploadsDir);
+    const now = Date.now();
+
+    for (const file of files) {
+      const filePath = path.join(uploadsDir, file);
+      const stats = await fs.promises.stat(filePath);
+      const age = now - stats.mtimeMs;
+      
+      if (age > 1000 * 60 * 60 * 24) { // 24 horas
+        await fs.promises.unlink(filePath);
+        console.log(`🧹 Archivo eliminado por antigüedad: ${file}`);
+      }
+    }
+  } catch (err) {
+    console.error("❌ Error al limpiar archivos antiguos:", err);
+  }
+});
+
 
 app.listen(PORT, () => {
   console.log(`🚀 API de WhatsApp corriendo en http://localhost:${PORT}`);
