@@ -33,3 +33,5 @@ dump.pm2
 # 🔒 Configuración Local
 *.local
 *.env.local
+
+node_modules
