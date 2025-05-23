@@ -29,6 +29,8 @@ let retryCount = 0;
 const MAX_RETRIES = 5;
 const MAX_BUFFER_SIZE = 100; // últimos 100 mensajes
 let messageAuditQueue = [];
+const multer = require('multer');
+const upload = multer({ dest: 'public/uploads/' });
 
 
 
@@ -256,8 +258,9 @@ function restartBot() {
 // Iniciamos el bot al arrancar
 startBot();
 
-app.post('/send', authenticateRequest, async (req, res) => {
-  const { number, message, fileUrl, fileName, caption } = req.body;
+app.post('/send', authenticateRequest, upload.single('file'), async (req, res) => {
+  const { number, message, caption, fileUrl, fileName } = req.body;
+  const file = req.file;
 
   if (!number) {
     return res.status(400).json({ error: 'El número es requerido' });
@@ -267,45 +270,70 @@ app.post('/send', authenticateRequest, async (req, res) => {
     return res.status(500).json({ error: 'Cliente no conectado. Esperando reconexión...' });
   }
 
-  try {
-    const to = `${number}@c.us`;
+  const to = `${number}@c.us`;
 
-    // 1️⃣ Enviar solo texto
-    if (message && !fileUrl) {
+  try {
+    // 1️⃣ Solo texto
+    if (message && !file && !fileUrl) {
       await client.sendText(to, message);
       return res.json({ success: true, message: 'Mensaje de texto enviado' });
     }
 
-    // 2️⃣ Enviar archivo (imagen, PDF, audio, etc.)
+    // 2️⃣ Desde URL
     if (fileUrl) {
       const ext = path.extname(fileUrl).toLowerCase();
+      const safeFileName = fileName || path.basename(fileUrl);
 
       if (['.jpg', '.jpeg', '.png'].includes(ext)) {
-        await client.sendImage(to, fileUrl, fileName || 'imagen', caption || '');
-        return res.json({ success: true, message: 'Imagen enviada' });
+        await client.sendImage(to, fileUrl, safeFileName, caption || '');
+        return res.json({ success: true, message: 'Imagen enviada desde URL' });
       }
 
       if (['.pdf', '.docx', '.xlsx', '.txt'].includes(ext)) {
-        await client.sendFile(to, fileUrl, fileName || 'archivo', caption || '');
-        return res.json({ success: true, message: 'Archivo enviado' });
+        await client.sendFile(to, fileUrl, safeFileName, caption || '');
+        return res.json({ success: true, message: 'Archivo enviado desde URL' });
       }
 
       if (['.mp3', '.ogg'].includes(ext)) {
-        await client.sendFile(to, fileUrl, fileName, '');
-        return res.json({ success: true, message: 'Audio enviado' });
+        await client.sendFile(to, fileUrl, safeFileName, caption || '');
+        return res.json({ success: true, message: 'Audio enviado desde URL' });
       }
 
-      return res.status(400).json({ error: 'Extensión de archivo no soportada' });
+      return res.status(400).json({ error: 'Extensión de archivo no soportada desde URL' });
     }
 
-    // 3️⃣ Si no se proporciona ni mensaje ni archivo
-    return res.status(400).json({ error: 'Debes enviar un mensaje o un archivo' });
+    // 3️⃣ Desde archivo binario (form-data)
+    if (file) {
+      const ext = path.extname(file.originalname).toLowerCase();
+      const filePath = file.path;
+      const localFileName = file.originalname;
+
+      if (['.jpg', '.jpeg', '.png'].includes(ext)) {
+        await client.sendImage(to, filePath, localFileName, caption || '');
+        return res.json({ success: true, message: 'Imagen enviada desde archivo' });
+      }
+
+      if (['.pdf', '.docx', '.xlsx', '.txt'].includes(ext)) {
+        await client.sendFile(to, filePath, localFileName, caption || '');
+        return res.json({ success: true, message: 'Archivo enviado desde archivo' });
+      }
+
+      if (['.mp3', '.ogg'].includes(ext)) {
+        await client.sendFile(to, filePath, localFileName, caption || '');
+        return res.json({ success: true, message: 'Audio enviado desde archivo' });
+      }
+
+      return res.status(400).json({ error: 'Tipo de archivo no soportado desde archivo' });
+    }
+
+    return res.status(400).json({ error: 'Debes enviar un mensaje o un archivo (URL o binario)' });
 
   } catch (error) {
     console.error("❌ Error enviando mensaje:", error);
-    res.status(500).json({ error: 'Error enviando mensaje', details: error.message });
+    return res.status(500).json({ error: 'Error enviando mensaje', details: error.message });
   }
 });
+
 
 
 app.get('/status', (req, res) => {
