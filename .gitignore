@@ -34,4 +34,6 @@ dump.pm2
 *.local
 *.env.local
 
+#Data
 node_modules
+public/uploads

@@ -257,9 +257,10 @@ function restartBot() {
 startBot();
 
 app.post('/send', authenticateRequest, async (req, res) => {
-  const { number, message } = req.body;
-  if (!number || !message) {
-    return res.status(400).json({ error: 'Número y mensaje requeridos' });
+  const { number, message, fileUrl, fileName, caption } = req.body;
+
+  if (!number) {
+    return res.status(400).json({ error: 'El número es requerido' });
   }
 
   if (!isClientConnected || !client) {
@@ -267,12 +268,45 @@ app.post('/send', authenticateRequest, async (req, res) => {
   }
 
   try {
-    await client.sendText(`${number}@c.us`, message);
-    res.json({ success: true, message: `Mensaje enviado a ${number}` });
+    const to = `${number}@c.us`;
+
+    // 1️⃣ Enviar solo texto
+    if (message && !fileUrl) {
+      await client.sendText(to, message);
+      return res.json({ success: true, message: 'Mensaje de texto enviado' });
+    }
+
+    // 2️⃣ Enviar archivo (imagen, PDF, audio, etc.)
+    if (fileUrl) {
+      const ext = path.extname(fileUrl).toLowerCase();
+
+      if (['.jpg', '.jpeg', '.png'].includes(ext)) {
+        await client.sendImage(to, fileUrl, fileName || 'imagen', caption || '');
+        return res.json({ success: true, message: 'Imagen enviada' });
+      }
+
+      if (['.pdf', '.docx', '.xlsx', '.txt'].includes(ext)) {
+        await client.sendFile(to, fileUrl, fileName || 'archivo', caption || '');
+        return res.json({ success: true, message: 'Archivo enviado' });
+      }
+
+      if (['.mp3', '.ogg'].includes(ext)) {
+        await client.sendFile(to, fileUrl, fileName, '');
+        return res.json({ success: true, message: 'Audio enviado' });
+      }
+
+      return res.status(400).json({ error: 'Extensión de archivo no soportada' });
+    }
+
+    // 3️⃣ Si no se proporciona ni mensaje ni archivo
+    return res.status(400).json({ error: 'Debes enviar un mensaje o un archivo' });
+
   } catch (error) {
-    res.status(500).json({ error: 'Error enviando mensaje', details: error });
+    console.error("❌ Error enviando mensaje:", error);
+    res.status(500).json({ error: 'Error enviando mensaje', details: error.message });
   }
 });
+
 
 app.get('/status', (req, res) => {
   res.json({ connected: isClientConnected });
