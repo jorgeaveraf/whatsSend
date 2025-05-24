@@ -306,33 +306,69 @@ app.post('/send', authenticateRequest, upload.single('file'), async (req, res) =
     if (file) {
       const ext = path.extname(file.originalname).toLowerCase();
       const filePath = file.path;
-      const localFileName = file.originalname;
+      const mime = file.mimetype;
+      const extFromMime = mime ? `.${mime.split('/')[1]}` : '';
+      const filename = file.originalname || `file${extFromMime}`;
 
-      if (['.jpg', '.jpeg', '.png'].includes(ext)) {
-        await client.sendImage(to, filePath, localFileName, caption || '');
-        return res.json({ success: true, message: 'Imagen enviada desde archivo' });
+
+      if (['image/jpeg', 'image/png', 'image/jpg'].includes(mime)) {
+        try {
+          const base64Data = fs.readFileSync(filePath, { encoding: 'base64' }).replace(/\r?\n|\r/g, '');
+          const fullBase64 = `data:${mime};base64,${base64Data}`;
+      
+          console.log({
+            to,
+            base64Preview: fullBase64.slice(0, 60),
+            filename,
+            caption
+          });
+      
+          await client.sendImageFromBase64(to, fullBase64, filename, caption || '');
+          fs.unlink(filePath, () => {});
+          return res.json({ success: true, message: 'Imagen enviada desde archivo' });
+      
+        } catch (err) {
+          console.error("❌ Fallo al enviar imagen base64:", err);
+          return res.status(500).json({ error: 'Error al enviar imagen', details: err.message });
+        }
       }
 
-      if (['.pdf', '.docx', '.xlsx', '.txt'].includes(ext)) {
-        await client.sendFile(to, filePath, localFileName, caption || '');
-        return res.json({ success: true, message: 'Archivo enviado desde archivo' });
+      if (
+        ['.pdf', '.docx', '.xlsx', '.txt', '.mp3', '.ogg'].includes(ext)
+      ) {
+        try {
+          const base64Data = fs.readFileSync(filePath, { encoding: 'base64' }).replace(/\r?\n|\r/g, '');
+          const fullBase64 = `data:${mime};base64,${base64Data}`;
+      
+          console.log({
+            to,
+            base64Preview: fullBase64.slice(0, 60),
+            filename,
+            caption
+          });
+      
+          await client.sendFileFromBase64(to, fullBase64, filename, caption || '');
+          fs.unlink(filePath, () => {});
+          return res.json({ success: true, message: 'Archivo enviado desde archivo' });
+        } catch (err) {
+          console.error("❌ Fallo al enviar archivo base64:", err);
+          return res.status(500).json({ error: 'Error al enviar archivo', details: err.message });
+        }
       }
-
-      if (['.mp3', '.ogg'].includes(ext)) {
-        await client.sendFile(to, filePath, localFileName, caption || '');
-        return res.json({ success: true, message: 'Audio enviado desde archivo' });
-      }
-
-      return res.status(400).json({ error: 'Tipo de archivo no soportado desde archivo' });
+      
+    
+      // ❌ Tipo no soportado
+      return res.status(400).json({ error: 'Extensión no soportada desde archivo' });
     }
 
-    return res.status(400).json({ error: 'Debes enviar un mensaje o un archivo (URL o binario)' });
+    return res.status(400).json({ error: 'Debes enviar un mensaje o archivo (URL o binario)' });
 
   } catch (error) {
     console.error("❌ Error enviando mensaje:", error);
     return res.status(500).json({ error: 'Error enviando mensaje', details: error.message });
   }
 });
+
 
 
 
