@@ -14,6 +14,8 @@ app.use(express.json());
 // Config
 const PORT = process.env.PORT || 3000;
 const SESSION_NAME = process.env.SESSION_NAME || 'default_session';
+const SESSION_DIR = path.join(__dirname, 'tokens', SESSION_NAME);
+const SINGLETON_LOCK_PATH = path.join(SESSION_DIR, 'SingletonLock');
 const COMPANY_NAME = process.env.COMPANY_NAME || 'Empresa Desconocida';
 const CLIENT_ID = process.env.CLIENT_ID || '0000';
 const ACCESS_KEY = process.env.ACCESS_KEY || 'Null';
@@ -31,6 +33,15 @@ const MAX_BUFFER_SIZE = 100; // últimos 100 mensajes
 let messageAuditQueue = [];
 const multer = require('multer');
 const upload = multer({ dest: 'public/uploads/' });
+
+function clearSessionDir() {
+  try {
+    fs.rmSync(SESSION_DIR, { recursive: true, force: true });
+    console.log('🧹 Directorio de sesión eliminado para forzar nuevo QR.');
+  } catch (err) {
+    console.warn('⚠️ No se pudo limpiar el directorio de sesión:', err.message);
+  }
+}
 
 
 
@@ -79,20 +90,62 @@ function storeInAuditQueue(data) {
 
 
 
+function cleanupSingletonLock() {
+  try {
+    fs.unlinkSync(SINGLETON_LOCK_PATH);
+    console.log('🧹 Eliminado lock previo de Chrome para evitar conflicto de perfiles.');
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.warn('⚠️ No se pudo eliminar SingletonLock:', err.message);
+    }
+    // Si no existe, seguimos igual.
+  }
+}
+
+
 // Función para iniciar Venom-Bot
 function startBot() {
   console.log('🔄 Iniciando sesión de Venom-Bot...');
+  cleanupSingletonLock();
+
+  const createOptions = {
+    session: SESSION_NAME,
+    multidevice: true,
+    useChrome: true,
+    disableWelcome: true,
+    logQR: true, // imprime el QR en la consola en caso de fallo de front
+    createPathFileToken: true,
+    folderNameToken: 'tokens',
+    waitForLogin: true, // espera login y muestra QR
+    autoClose: 0,       // no cierres la página automáticamente
+    headless: 'new', // modo headless estable
+    // Asegura que Chrome pueda levantarse en entornos sin sandbox (containers/VPS).
+    browserArgs: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-extensions',
+      `--user-data-dir=${SESSION_DIR}`,
+      '--remote-allow-origins=*',
+      '--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.6045.123 Safari/537.36'
+    ],
+  };
+
+  const onQr = (base64Qr, asciiQR, attempts) => {
+    qrBase64 = base64Qr;
+    console.log('⚡ [QR Capturado]', base64Qr.slice(0, 60) + '...', 'intentos:', attempts);
+    if (asciiQR) {
+      console.log(asciiQR);
+    }
+  };
+
+  const onStatus = (statusSession) => {
+    console.log('📌 Estado de sesión:', statusSession);
+  };
 
   venom
-    .create({
-      session: SESSION_NAME,
-      multidevice: true,
-      headless: 'new',
-      catchQR: (base64Qr) => {
-        qrBase64 = base64Qr;
-        console.log('⚡ [QR Capturado]', base64Qr.slice(0, 60) + '...');
-      },
-    })
+    .create(createOptions, onQr, onStatus)
     .then((bot) => {
       client = bot;
       isClientConnected = true;
@@ -198,6 +251,11 @@ function startBot() {
     })
     .catch((err) => {
       console.error('❌ Error al iniciar Venom-Bot:', err);
+    
+      // Si el error es "Not Logged", borramos la sesión para forzar QR limpio.
+      if (String(err).includes('Not Logged')) {
+        clearSessionDir();
+      }
     
       if (retryCount >= MAX_RETRIES) {
         console.error('🚫 Límite de reintentos alcanzado. Deteniendo reinicio automático.');
