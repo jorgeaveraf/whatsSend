@@ -26,6 +26,7 @@ const MAX_BUFFER_SIZE = 100;
 let client = null;
 let qrBase64 = null;
 let isClientConnected = false;
+let isStartingClient = false;
 let messageAuditQueue = [];
 let healthCheckInterval = null;
 let retryCount = 0;
@@ -80,6 +81,11 @@ function cleanupSessionDir() {
 
 // WPPConnect bootstrap
 async function startClient() {
+  if (isStartingClient) {
+    console.log('⏳ startClient ya en progreso, se omite nuevo arranque.');
+    return;
+  }
+  isStartingClient = true;
   console.log('🔄 Iniciando sesión con WPPConnect...');
   qrBase64 = null;
 
@@ -116,6 +122,7 @@ async function startClient() {
       autoClose: 0,
     });
 
+    isStartingClient = false;
     isClientConnected = true;
     retryCount = 0;
     startHealthCheck();
@@ -156,6 +163,16 @@ async function startClient() {
     });
   } catch (err) {
     console.error('❌ Error al iniciar WPPConnect:', err);
+    const msg = (err && err.message) ? err.message : String(err);
+
+    // Si el navegador ya está corriendo con el mismo userDataDir,
+    // limpiamos la carpeta de sesión para evitar bucles de reintentos.
+    if (msg.includes('The browser is already running')) {
+      console.warn('⚠️ Navegador previo detectado para la sesión. Limpiando tokens y reintentando...');
+      cleanupSessionDir();
+    }
+
+    isStartingClient = false;
     isClientConnected = false;
     if (retryCount >= MAX_RETRIES) {
       console.error('🚫 Límite de reintentos alcanzado.');
@@ -176,12 +193,10 @@ function startHealthCheck() {
       isClientConnected = state === 'CONNECTED';
       if (!isClientConnected) {
         console.log('⚠️ HealthCheck: cliente desconectado, reiniciando...');
-        cleanupSessionDir();
         startClient();
       }
     } catch (err) {
       console.log('Error en healthCheck:', err);
-      cleanupSessionDir();
       startClient();
     }
   }, 30000);
@@ -294,7 +309,6 @@ cron.schedule('0 3 * * *', async () => {
 });
 
 // Start
-cleanupSessionDir();
 startClient();
 
 app.listen(PORT, () => {
