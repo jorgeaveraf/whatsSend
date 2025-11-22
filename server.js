@@ -116,6 +116,10 @@ async function startClient() {
         '--disable-extensions',
         `--user-data-dir=${SESSION_DIR}`,
       ],
+      puppeteerOptions: {
+        executablePath: '/usr/bin/google-chrome',
+      },
+
       disableSpins: true,
       defaultViewport: null,
       waitForLogin: true,
